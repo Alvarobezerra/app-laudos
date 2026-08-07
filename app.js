@@ -114,6 +114,10 @@ createApp({
                     // Google Apps Script redirect mode needs follow
                     const res = await fetch(GOOGLE_SCRIPT_URL, {
                         method: 'POST',
+                        redirect: 'follow',
+                        headers: {
+                            'Content-Type': 'text/plain;charset=utf-8'
+                        },
                         body: JSON.stringify({
                             key: "perito:icrim123", // A senha configurada
                             mobile_id: draft.id,
