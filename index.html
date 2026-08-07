@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Laudo Mobile Offline</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <link rel="stylesheet" href="style.css">
+    <!-- Vue 3 CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- localForage for IndexedDB -->
+    <script src="https://unpkg.com/localforage@1.10.0/dist/localforage.min.js"></script>
+</head>
+<body>
+    <div id="app" class="app-container">
+        <header class="glass-header">
+            <div class="header-content">
+                <h1>📋 Coleta de Laudo</h1>
+                <div class="network-status" :class="isOnline ? 'online' : 'offline'">
+                    {{ isOnline ? 'Online' : 'Offline' }}
+                </div>
+            </div>
+            <button class="sync-btn" @click="syncData" :disabled="!isOnline || unsyncedDrafts.length === 0" v-if="isAuthenticated">
+                Sincronizar ({{ unsyncedDrafts.length }})
+            </button>
+        </header>
+
+        <!-- Tela de Login -->
+        <main class="main-content" v-if="!isAuthenticated">
+            <section class="form-section login-section">
+                <h2 style="text-align: center; margin-bottom: 20px;">🔒 Acesso Restrito</h2>
+                <p style="text-align: center; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 24px;">Insira a senha do perito para acessar o sistema.</p>
+                <form @submit.prevent="login">
+                    <div class="input-group">
+                        <label>Usuário</label>
+                        <input type="text" v-model="loginForm.username" placeholder="Digite o usuário..." required>
+                    </div>
+                    <div class="input-group">
+                        <label>Senha</label>
+                        <input type="password" v-model="loginForm.password" placeholder="Digite a senha..." required>
+                    </div>
+                    <button type="submit" class="btn-submit" style="margin-top: 16px;">Entrar</button>
+                </form>
+            </section>
+        </main>
+
+        <main class="main-content" v-else>
+            <!-- Drafts List -->
+            <section class="form-section" v-if="unsyncedDrafts.length > 0" style="margin-bottom: 24px; border-color: #10b981;">
+                <h2>📁 Rascunhos Salvos</h2>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">Estes laudos estão salvos no celular e aguardam sincronização. Clique para editar.</p>
+                <div class="draft-list">
+                    <div v-for="draft in unsyncedDrafts" :key="draft.id" class="draft-item" @click="loadIntoForm(draft)">
+                        <strong>Laudo:</strong> {{ draft.dados.num_laudo || 'Sem número' }} <br>
+                        <small>Vítimas: {{ draft.dados.vitimas.length }} | {{ new Date(parseInt(draft.id)).toLocaleString() }}</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Form Section -->
+            <form @submit.prevent="saveDraft" class="glass-form">
+                
+                <!-- Da Ocorrência -->
+                <section class="form-section">
+                    <h2>📋 Da Ocorrência</h2>
+                    <div class="input-group">
+                        <label>Nº do Laudo</label>
+                        <input type="text" v-model="form.num_laudo" placeholder="0092258">
+                    </div>
+                    <div class="input-group">
+                        <label>Nº da Ocorrência</label>
+                        <input type="text" v-model="form.ocorrencia" placeholder="12345/2026">
+                    </div>
+                    <div class="input-group">
+                        <label>Autoridade Solicitante</label>
+                        <input type="text" v-model="form.autoridade_sel" placeholder="Ex: Delegado Silva">
+                    </div>
+                    <div class="input-group">
+                        <label>Data da Perícia</label>
+                        <input type="date" v-model="form.data_pericia_input">
+                    </div>
+                </section>
+
+                <!-- Do Local -->
+                <section class="form-section">
+                    <h2>📍 Do Local</h2>
+                    <div class="input-group">
+                        <label>Endereço completo</label>
+                        <input type="text" v-model="form.endereco" placeholder="Rua, Nº, Bairro...">
+                    </div>
+                    <div class="input-group row">
+                        <div class="col">
+                            <label>Latitude</label>
+                            <input type="text" v-model="form.latitude">
+                        </div>
+                        <div class="col">
+                            <label>Longitude</label>
+                            <input type="text" v-model="form.longitude">
+                        </div>
+                        <button type="button" @click="getGPS" class="btn-gps">📍 GPS</button>
+                    </div>
+                    <div class="input-group">
+                        <label>Isolamento</label>
+                        <select v-model="form.isolamento">
+                            <option value="">Selecione...</option>
+                            <option value="Preservado e Isolado">Preservado e Isolado</option>
+                            <option value="Não Preservado">Não Preservado</option>
+                            <option value="Outros">Outros</option>
+                        </select>
+                    </div>
+                </section>
+
+                <!-- Das Vítimas -->
+                <section class="form-section">
+                    <h2>👥 Das Vítimas</h2>
+                    <div v-for="(vitima, index) in form.vitimas" :key="index" class="vitima-card">
+                        <div class="vitima-header">
+                            <h3>Vítima #{{ index + 1 }}</h3>
+                            <button type="button" @click="removerVitima(index)" class="btn-remove" v-if="form.vitimas.length > 1">❌</button>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label>Nome Completo</label>
+                            <input type="text" v-model="vitima.nome" placeholder="Nome da vítima">
+                        </div>
+                        
+                        <div class="input-group">
+                            <label>Sexo</label>
+                            <select v-model="vitima.sexo">
+                                <option value="">Selecione</option>
+                                <option value="Masculino">Masculino</option>
+                                <option value="Feminino">Feminino</option>
+                            </select>
+                        </div>
+
+                        <h4>Lesões Constatadas</h4>
+                        <div v-for="(lesao, lIndex) in vitima.lesoes" :key="'l'+lIndex" class="lesao-group">
+                            <input type="text" v-model="vitima.lesoes[lIndex]" placeholder="Descrição da lesão">
+                            <button type="button" @click="removerLesao(index, lIndex)" v-if="vitima.lesoes.length > 1">❌</button>
+                        </div>
+                        <button type="button" @click="adicionarLesao(index)" class="btn-add-lesao">➕ Adicionar Lesão</button>
+                    </div>
+                    <button type="button" @click="adicionarVitima" class="btn-add">➕ Adicionar Outra Vítima</button>
+                </section>
+
+                <button type="submit" class="btn-save">💾 Salvar Rascunho Offline</button>
+            </form>
+        </main>
+        
+        <!-- Toast Notification -->
+        <div class="toast" :class="{ show: toast.show }">
+            {{ toast.message }}
+        </div>
+    </div>
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').then(reg => {
+                console.log('Service Worker Registrado!', reg);
+            }).catch(err => console.error('Erro no SW', err));
+        }
+    </script>
+</body>
+</html>
