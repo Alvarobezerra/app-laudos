@@ -111,10 +111,10 @@ createApp({
             
             for (const draft of drafts) {
                 try {
-                    // Google Apps Script redirect mode needs follow
-                    const res = await fetch(GOOGLE_SCRIPT_URL, {
+                    // Google Apps Script redirect mode needs follow and no-cors to bypass browser blocks
+                    await fetch(GOOGLE_SCRIPT_URL, {
                         method: 'POST',
-                        redirect: 'follow',
+                        mode: 'no-cors',
                         headers: {
                             'Content-Type': 'text/plain;charset=utf-8'
                         },
@@ -124,9 +124,7 @@ createApp({
                             dados: draft.dados
                         })
                     });
-                    
-                    const result = await res.json();
-                    if (result.error) throw new Error(result.error);
+                    // Em mode 'no-cors', a resposta é opaca, então assumimos sucesso se a rede não falhou.
                 } catch(e) {
                     console.error("Falha ao sincronizar: ", e);
                     failed.push(draft);
