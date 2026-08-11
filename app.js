@@ -10,7 +10,7 @@ createApp({
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyFjagDBxBuGRxAxvmxrYL1zfgPzXGO7PV8P07ufQqE3fg6xsnNed6sjsgwQ53-1JpUIA/exec"; 
         // -----------------------------
         
-        const isAuthenticated = ref(false);
+        const isAuthenticated = ref(true); // Login desabilitado temporariamente
         const loginForm = ref({ username: '', password: '' });
         let authToken = "";
 
