@@ -431,11 +431,8 @@
 
         <!-- AÇÕES -->
         <div class="actions">
-          <button type="button" class="btn-secondary" id="btnExportJson" style="display:none;">📥 Exportar Caso (.json)</button>
           <button type="button" class="btn-secondary" id="btnDrive" style="background:#0284c7; color:white; border:none;">☁️ Enviar Servidor</button>
-          <button type="button" id="btnGerar" style="display:none;">✓ Gerar Variáveis</button>
-          <label for="docxInput" id="btnUploadTemplate" class="btn-label" style="background:var(--accent);">📄 Laudo</label>
-          <input type="file" id="docxInput" accept=".docx" style="display:none;">
+          <button type="button" class="btn-secondary" id="btnOpenPreviewTop" style="background:var(--accent); color:white; border:none;" onclick="document.getElementById('previewPane').classList.add('open')">📄 Laudo</button>
           <button type="button" onclick="openOcorrenciasModal()" style="padding:8px 12px; background:#0284c7; color:white; border:none; border-radius:8px; font-weight:600; cursor:pointer; font-size:13px;">📂 Ocorrências</button>
           <button type="button" class="btn-secondary" id="btnSalvar" style="background:#2563eb; color:white; border:none;">💾 Salvar Rascunho</button>
           <button type="button" class="btn-secondary" id="btnLimpar">🧹 Limpar</button>
