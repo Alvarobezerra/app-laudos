@@ -242,12 +242,12 @@
             <div class="form-group full"><label>Investigado(s)</label><textarea id="investigado" rows="2" placeholder="Nomes dos investigados..."></textarea></div>
             
             <div class="form-group"><label>Data da Perícia</label><input type="date" id="data_pericia_input"></div>
-            <div class="form-group"><label>Horário da Perícia</label><input type="time" id="horario"></div>
+            <div class="form-group"><label>Horário da Perícia</label><input type="time" step="1" id="horario"></div>
             
             <div class="form-group"><label>Data de Atendimento</label><input type="date" id="data_atendimento_input"></div>
-            <div class="form-group"><label>Horário de Atendimento</label><input type="time" id="horario_atendimento"></div>
+            <div class="form-group"><label>Horário de Atendimento</label><input type="time" step="1" id="horario_atendimento"></div>
             
-            <div class="form-group"><label>Perito</label><input type="text" id="perito"></div>
+            <div class="form-group"><label>Perito</label><input type="text" id="perito" value="Álvaro Antônio Bezerra dos Santos"></div>
             
             <div class="form-group">
               <label>Autoridade Solicitante</label>
@@ -270,11 +270,13 @@
             <div class="form-group full"><label>Endereço</label><input type="text" id="endereco" placeholder="Rua, Número, Bairro..."></div>
             
             <div class="form-group full">
-              <label>Coordenadas (Latitude / Longitude)</label>
-              <div class="input-group">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label style="margin:0;">Coordenadas (GPS)</label>
+                <button type="button" class="btn-secondary" id="btnGeo" style="padding:4px 12px; font-size:12px; height:32px;">📍 Obter GPS Local</button>
+              </div>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                 <input type="text" id="latitude" placeholder="Latitude (ex: -5.5186)">
                 <input type="text" id="longitude" placeholder="Longitude (ex: -47.4776)">
-                <button type="button" class="btn-secondary" id="btnGeo">📍 GPS</button>
               </div>
             </div>
             
@@ -429,9 +431,13 @@
 
         <!-- AÇÕES -->
         <div class="actions">
+          <button type="button" class="btn-secondary" id="btnExportJson" style="background:#10b981; color:white; border:none;">📥 Exportar Caso (.json)</button>
+          <button type="button" class="btn-secondary" id="btnDrive" style="background:#0284c7; color:white; border:none;">☁️ Enviar para o Servidor</button>
           <button type="button" id="btnGerar">✓ Gerar Variáveis</button>
           <label for="docxInput" id="btnUploadTemplate" class="btn-label" style="background:var(--accent);">📄 Gerar Laudo (.docx)</label>
           <input type="file" id="docxInput" accept=".docx" style="display:none;">
+          <button type="button" onclick="openOcorrenciasModal()" style="padding:8px 12px; background:#0284c7; color:white; border:none; border-radius:8px; font-weight:600; cursor:pointer; font-size:13px; margin-right:6px;">📂 Minhas Ocorrências</button>
+          <button type="button" class="btn-secondary" id="btnSalvar" style="background:#2563eb; color:white; border:none;">💾 Salvar Rascunho</button>
           <button type="button" class="btn-secondary" id="btnLimpar">Limpar Tudo</button>
           <span id="save-status" style="margin-left:auto; color:var(--text-secondary); font-size:13px; font-weight:500;"></span>
         </div>
@@ -698,40 +704,400 @@ document.getElementById("btnAddVestigio").addEventListener("click", () => {
 // --- SAVE & LOAD ---
 const LS_KEY = "icrim_laudo_v5";
 
-function saveForm() {
+// --- REQUISITO 1: FORMULÁRIO EM BRANCO AO RECARREGAR A PÁGINA ---
+// O formulário abre zerado por padrão para não misturar ocorrências anteriores.
+// O perito padrão é "Álvaro Antônio Bezerra dos Santos".
+
+const DRAFTS_KEY = "icrim_saved_occurrences_v1";
+
+function getDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+  } catch(e) {
+    return {};
+  }
+}
+
+function saveDrafts(drafts) {
+  localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+function getFormData() {
   const data = {};
   document.querySelectorAll("input, textarea, select").forEach(el => { if (el.id) data[el.id] = el.value; });
   data.vitimas = vitimas_state;
   data.vestigios = vestigiosState;
   data.fotos = fotosList;
-  localStorage.setItem(LS_KEY, JSON.stringify(data));
-  
-  const now = new Date();
-  const timeStr = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0");
-  document.getElementById("save-status").innerText = "Salvo às " + timeStr;
-  updatePreview();
+  return data;
 }
 
-function loadForm() {
-  const str = localStorage.getItem(LS_KEY);
-  if (str) {
-    try {
-      const data = JSON.parse(str);
-      for (const key in data) {
-        const el = document.getElementById(key);
-        if (el && typeof data[key] === 'string') el.value = data[key];
-      }
-      if (data.vitimas) vitimas_state = data.vitimas;
-      if (data.vestigios) vestigiosState = data.vestigios;
-      if (data.fotos) fotosList = data.fotos;
-    } catch(e){}
+// --- REQUISITO: PROTEÇÃO DE DUPLICIDADE E AUTO-PREENCHIMENTO ---
+
+function getDraftPericiaDate(item) {
+  if (!item || !item.dados) return null;
+  const dateStr = item.dados.data_pericia_input;
+  const timeStr = item.dados.horario;
+  if (!dateStr || !timeStr) return null;
+  
+  try {
+    const dParts = dateStr.split("-");
+    const tParts = timeStr.split(":");
+    if (dParts.length !== 3 || tParts.length < 2) return null;
+    return new Date(
+      parseInt(dParts[0]),
+      parseInt(dParts[1]) - 1,
+      parseInt(dParts[2]),
+      parseInt(tParts[0]),
+      parseInt(tParts[1]),
+      tParts[2] ? parseInt(tParts[2]) : 0
+    );
+  } catch(e) {
+    return null;
   }
+}
+
+// --- REQUISITO: PROTEÇÃO DE DUPLICIDADE E AUTO-PREENCHIMENTO ---
+
+function getDraftPericiaDate(item) {
+  if (!item || !item.dados) return null;
+  const dateStr = item.dados.data_pericia_input;
+  const timeStr = item.dados.horario;
+  if (!dateStr || !timeStr) return null;
+  
+  try {
+    const dParts = dateStr.split("-");
+    const tParts = timeStr.split(":");
+    if (dParts.length !== 3 || tParts.length < 2) return null;
+    return new Date(
+      parseInt(dParts[0]),
+      parseInt(dParts[1]) - 1,
+      parseInt(dParts[2]),
+      parseInt(tParts[0]),
+      parseInt(tParts[1]),
+      tParts[2] ? parseInt(tParts[2]) : 0
+    );
+  } catch(e) {
+    return null;
+  }
+}
+
+function hasRecentDraftByPericiaTime(targetDate, targetTime, currentId = null) {
+  const drafts = getDrafts();
+  
+  try {
+    const dParts = targetDate.split("-");
+    const tParts = targetTime.split(":");
+    if (dParts.length !== 3 || tParts.length < 2) return null;
+    
+    const targetDt = new Date(
+      parseInt(dParts[0]),
+      parseInt(dParts[1]) - 1,
+      parseInt(dParts[2]),
+      parseInt(tParts[0]),
+      parseInt(tParts[1]),
+      tParts[2] ? parseInt(tParts[2]) : 0
+    );
+    
+    for (const id in drafts) {
+      if (currentId && id === currentId) continue;
+      const item = drafts[id];
+      const itemDt = getDraftPericiaDate(item);
+      if (itemDt) {
+        const diffMs = Math.abs(targetDt - itemDt);
+        const diffMins = diffMs / 1000 / 60;
+        if (diffMins < 60) { // Menos de 1 hora de diferença com base no horário da perícia
+          return {
+            ocorrencia: item.ocorrencia || "Sem nº",
+            minutos: Math.round(diffMins),
+            id: item.id
+          };
+        }
+      }
+    }
+  } catch(e) {}
+  return null;
+}
+
+function prefillDateTimeAndGPS() {
+  console.log("prefillDateTimeAndGPS executado");
+  const now = new Date();
+  
+  // Format dates: YYYY-MM-DD
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+  
+  // Format times: HH:MM:SS
+  const hh = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  const timeStr = `${hh}:${min}:${ss}`;
+  
+  const fields = {
+    "data_pericia_input": dateStr,
+    "data_atendimento_input": dateStr,
+    "horario": timeStr,
+    "horario_atendimento": timeStr
+  };
+  
+  for (const id in fields) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.value = fields[id];
+    }
+  }
+
+  // Preencher GPS automaticamente (Fornecendo uma função vazia ao invés de null para evitar crash)
+  const latEl = document.getElementById("latitude");
+  const lonEl = document.getElementById("longitude");
+  if (latEl && lonEl) {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        latEl.value = pos.coords.latitude.toFixed(6);
+        lonEl.value = pos.coords.longitude.toFixed(6);
+        saveForm();
+        showToast("📍 GPS atualizado automaticamente!");
+      }, () => {
+        console.log("GPS recusado ou indisponível");
+      }, { enableHighAccuracy: true });
+    }
+  }
+}
+
+function resetForm(force = false) {
+  const now = new Date();
+  const dateStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2,"0") + "-" + String(now.getDate()).padStart(2,"0");
+  const timeStr = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + ":" + String(now.getSeconds()).padStart(2,"0");
+
+  if (!force) {
+    const recent = hasRecentDraftByPericiaTime(dateStr, timeStr);
+    if (recent) {
+      const confirmNew = confirm("⚠️ Alerta de Duplicidade por Horário:\nJá existe uma ocorrência salva no sistema com horário de perícia próximo (diferença de apenas " + recent.minutos + " minutos, Ocorrência: " + recent.ocorrencia + ").\n\nDeseja realmente abrir uma NOVA ocorrência em branco?");
+      if (!confirmNew) {
+        openOcorrenciasModal();
+        return;
+      }
+    }
+  }
+
+  // Limpa todos os campos
+  document.querySelectorAll("input, textarea, select").forEach(el => {
+    if (el.id !== "perito") el.value = "";
+  });
+  
+  const peritoEl = document.getElementById("perito");
+  if (peritoEl) peritoEl.value = "Álvaro Antônio Bezerra dos Santos";
+  
+  vitimas_state = [];
+  vestigiosState = [];
+  fotosList = [];
+  
   renderVitimas();
   renderVestigios();
   renderFotos();
   updateIsoUI();
   updateInstUI();
+  
+  // Aplica preenchimento automático de data/hora/GPS
+  prefillDateTimeAndGPS();
+  
+  updatePreview();
+  
+  const statusEl = document.getElementById("save-status");
+  if (statusEl) statusEl.innerText = "Formulário em branco iniciado";
 }
+
+
+function saveCurrentAsDraft(status) {
+  const data = {};
+  document.querySelectorAll("input, textarea, select").forEach(el => {
+    if (el.id) data[el.id] = el.value;
+  });
+  data.vitimas = vitimas_state;
+  data.vestigios = vestigiosState;
+  data.fotos = fotosList;
+  
+  const payload = {
+    ocorrencia: data.ocorrencia,
+    status: status,
+    dataAtualizacao: new Date().toISOString(),
+    dados: data
+  };
+
+  const drafts = getDrafts();
+  
+  let draftId = data.ocorrencia;
+  if (!draftId) {
+     draftId = window.currentDraftId || ("temp_" + Date.now());
+     window.currentDraftId = draftId; 
+  }
+
+  payload.id = draftId;
+  drafts[draftId] = payload;
+
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(drafts));
+  } catch(e) {
+    console.error("Erro ao salvar rascunho:", e);
+  }
+}
+
+function saveForm() {
+  saveCurrentAsDraft("rascunho");
+  const now = new Date();
+  const timeStr = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + ":" + String(now.getSeconds()).padStart(2,"0");
+  const statusEl = document.getElementById("save-status");
+  if (statusEl) statusEl.innerText = "Salvo às " + timeStr;
+  updatePreview();
+}
+
+function loadForm() {
+  console.log("loadForm executado");
+  resetForm(true); // O primeiro carregamento é "forçado" para abrir sem o popup confirm
+}
+
+function loadDraftById(id) {
+  const drafts = getDrafts();
+  const item = drafts[id];
+  if (!item || !item.dados) {
+    showToast("⚠️ Ocorrência não encontrada.");
+    return;
+  }
+  const data = item.dados;
+  for (const key in data) {
+    const el = document.getElementById(key);
+    if (el && typeof data[key] === 'string') el.value = data[key];
+  }
+  vitimas_state = data.vitimas || [];
+  vestigiosState = data.vestigios || [];
+  fotosList = data.fotos || [];
+  renderVitimas();
+  renderVestigios();
+  renderFotos();
+  updateIsoUI();
+  updateInstUI();
+  updatePreview();
+  closeOcorrenciasModal();
+  showToast("✅ Ocorrência " + (item.ocorrencia || "") + " carregada!");
+}
+
+function deleteDraftById(id) {
+  const drafts = getDrafts();
+  const item = drafts[id] || {};
+  const ocorrenciaNum = item.ocorrencia || id;
+
+  if (!confirm("Tem certeza que deseja excluir a ocorrência " + ocorrenciaNum + "? Ela será removida deste dispositivo e da planilha do Google Drive.")) return;
+
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbx9N4hidxHbfAUUpHVDAOadZBF5SRB9x9UzC0nt3k-wW0pgLThCHwBQsaUMJjtcTL1QJw/exec";
+  
+  // Envia ID e número da ocorrência para garantir exclusão na planilha
+  fetch(GAS_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ key: "perito:icrim123", action: "delete", mobile_id: id })
+  }).catch(err => {});
+
+  if (ocorrenciaNum !== id) {
+    fetch(GAS_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ key: "perito:icrim123", action: "delete", mobile_id: ocorrenciaNum })
+    }).catch(err => {});
+  }
+
+  delete drafts[id];
+  saveDrafts(drafts);
+  renderOcorrenciasList();
+  showToast("🗑️ Ocorrência " + ocorrenciaNum + " excluída do dispositivo e da planilha!");
+}
+
+function openOcorrenciasModal() {
+  renderOcorrenciasList();
+  const m = document.getElementById("ocorrenciasModalOverlay");
+  if (m) m.style.display = "flex";
+
+  // Buscar também as ocorrências salvas na Planilha do Google (Servidor)
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbx9N4hidxHbfAUUpHVDAOadZBF5SRB9x9UzC0nt3k-wW0pgLThCHwBQsaUMJjtcTL1QJw/exec";
+  fetch(GAS_URL + "?key=perito:icrim123")
+    .then(res => res.json())
+    .then(list => {
+      if (Array.isArray(list) && list.length > 0) {
+        const drafts = getDrafts();
+        list.forEach(item => {
+          try {
+            const parsedData = typeof item.dados_json === "string" ? JSON.parse(item.dados_json) : item.dados_json;
+            const id = item.mobile_id || parsedData.ocorrencia || ("cloud_" + Date.now());
+            drafts[id] = {
+              id: id,
+              ocorrencia: parsedData.ocorrencia || item.mobile_id || "Sem Número",
+              num_laudo: parsedData.num_laudo || "s/n",
+              perito: parsedData.perito || "Álvaro Antônio Bezerra dos Santos",
+              tipo_local: parsedData.tipo_local || "Morte Violenta",
+              data_salvamento: item.data_sincronizacao ? new Date(item.data_sincronizacao).toLocaleString("pt-BR") : new Date().toLocaleString("pt-BR"),
+              status: "sincronizado",
+              dados: parsedData
+            };
+          } catch(e){}
+        });
+        saveDrafts(drafts);
+        renderOcorrenciasList();
+      }
+    })
+    .catch(err => {
+      console.log("Servidor em nuvem indisponível offline");
+    });
+}
+
+function closeOcorrenciasModal() {
+  const m = document.getElementById("ocorrenciasModalOverlay");
+  if (m) m.style.display = "none";
+}
+
+function renderOcorrenciasList() {
+  const container = document.getElementById("ocorrenciasListContainer");
+  if (!container) return;
+  
+  const drafts = getDrafts();
+  const keys = Object.keys(drafts);
+  
+  if (keys.length === 0) {
+    container.innerHTML = `<div style="text-align:center; padding:32px; color:var(--text-muted);">Nenhuma ocorrência salva ou sincronizada ainda.</div>`;
+    return;
+  }
+  
+  let html = "";
+  // Sort latest first
+  keys.sort().reverse().forEach(k => {
+    const item = drafts[k];
+    const isSync = item.status === "sincronizado";
+    const badgeColor = isSync ? "#10b981" : "#f59e0b";
+    const badgeText = isSync ? "☁️ Sincronizado" : "💾 Rascunho";
+    
+    html += `
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px; margin-bottom:10px; display:flex; flex-direction:column; gap:6px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="font-size:15px; color:#0f172a;">Ocorrência: ${item.ocorrencia || "Sem nº"}</strong>
+          <span style="font-size:11px; padding:3px 8px; border-radius:12px; background:${badgeColor}22; color:${badgeColor}; font-weight:600;">${badgeText}</span>
+        </div>
+        <div style="font-size:12px; color:#64748b;">
+          <div>Perito: <strong>${item.perito || "Álvaro"}</strong> | Tipo: <strong>${item.tipo_local || "Geral"}</strong></div>
+          <div>Salvo em: ${item.data_salvamento || "-"}</div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:6px;">
+          <button type="button" onclick="loadDraftById('${item.id}')" style="flex:1; padding:7px; background:#2563eb; color:white; border:none; border-radius:6px; font-weight:600; cursor:pointer; font-size:12px;">📥 Abrir / Editar</button>
+          <button type="button" onclick="deleteDraftById('${item.id}')" style="padding:7px 12px; background:#ef444415; color:#ef4444; border:1px solid #ef444444; border-radius:6px; font-weight:600; cursor:pointer; font-size:12px;">🗑️ Excluir</button>
+        </div>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
+}
+
+
 
 // --- PREVIEW RENDERER ---
 function updatePreview() {
@@ -829,6 +1195,43 @@ document.getElementById("btnGeo").addEventListener("click", () => {
   }, () => { btn.innerText = "📍 GPS"; showToast("Erro no GPS."); }, { enableHighAccuracy: true });
 });
 
+document.getElementById("btnDrive").addEventListener("click", () => {
+  saveForm();
+
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbx9N4hidxHbfAUUpHVDAOadZBF5SRB9x9UzC0nt3k-wW0pgLThCHwBQsaUMJjtcTL1QJw/exec";
+
+  // Coletar dados do formulário
+  const data = {};
+  document.querySelectorAll("input, textarea, select").forEach(el => { if (el.id) data[el.id] = el.value; });
+  data.vitimas = vitimas_state;
+  data.vestigios = vestigiosState;
+  data.fotos_count = fotosList.length;
+
+  const payload = {
+    key: "perito:icrim123",
+    mobile_id: data.ocorrencia || ("mob_" + Date.now()),
+    dados: data
+  };
+
+  saveCurrentAsDraft("sincronizado");
+  showToast("⏳ Enviando para o Google Drive...");
+
+  // mode: "no-cors" garante que o browser não bloqueia o envio
+  // O dado SAI mesmo sem ler a resposta
+  fetch(GAS_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify(payload)
+  })
+  .then(() => {
+    showToast("✅ Ocorrência enviada ao Google Drive com sucesso!");
+  })
+  .catch(err => {
+    showToast("⚠️ Falha na conexão: " + err.message);
+  });
+});
+
 document.getElementById("btnLimpar").addEventListener("click", () => {
   if (confirm("Limpar todo o formulário?")) {
     document.getElementById("laudoForm").reset();
@@ -836,7 +1239,7 @@ document.getElementById("btnLimpar").addEventListener("click", () => {
     vitimas_state = [{"nome":"","cad":"","documento":"","sexo":"","data_nascimento":"","filicao":"","naturalidade":""}];
     vestigiosState = [{"tipo":"","localizacao":"","descricao":""}];
     fotosList = [];
-    loadForm(); showToast("Formulário limpo!");
+    resetForm(true); showToast("Formulário limpo!");
   }
 });
 
@@ -848,10 +1251,85 @@ document.getElementById("btnCopiarPreview").addEventListener("click", () => {
 
 document.querySelectorAll("input, textarea, select").forEach(el => el.addEventListener("input", saveForm));
 
+
+
+// --- AUTENTICAÇÃO TEMPORARIAMENTE SUSPENSA (AUTO-LOGIN ALVARO) ---
+function checkAuthOnLoad() {
+  sessionStorage.setItem("user_logged_in", "true");
+  localStorage.setItem("user_logged_in", "true");
+  sessionStorage.setItem("current_user", "Álvaro Antônio Bezerra dos Santos");
+  
+  const overlay = document.getElementById("loginModalOverlay");
+  if (overlay) overlay.style.display = "none";
+  
+  const peritoEl = document.getElementById("perito");
+  if (peritoEl && (!peritoEl.value || peritoEl.value === "<perito>")) {
+    peritoEl.value = "Álvaro Antônio Bezerra dos Santos";
+    if (typeof saveForm === "function") saveForm();
+  }
+}
+
+function submitLogin() { checkAuthOnLoad(); }
+function handleLoginSubmit(e) { if(e) e.preventDefault(); checkAuthOnLoad(); return false; }
+
+
+window.addEventListener("DOMContentLoaded", () => { checkAuthOnLoad(); });
+
 window.addEventListener("DOMContentLoaded", () => {
   loadForm();
 });
 </script>
+
+
+<!-- LOGIN MODAL OVERLAY -->
+<div id="loginModalOverlay" style="display:none !important; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.85); backdrop-filter:blur(6px); z-index:999999; display:flex; align-items:center; justify-content:center; padding:16px;">
+  <div style="background:#ffffff; border-radius:16px; padding:32px 24px; width:100%; max-width:400px; box-shadow:0 20px 40px rgba(0,0,0,0.3); text-align:center;">
+    <div style="font-size:32px; margin-bottom:8px;">⚖️</div>
+    <h2 style="font-size:20px; font-weight:700; color:#0f172a; margin-bottom:4px;">ICRIM — Sistema de Laudos</h2>
+    <p style="font-size:13px; color:#64748b; margin-bottom:24px;">Autenticação Pericial Obrigatória</p>
+    
+    <form id="loginForm" onsubmit="handleLoginSubmit(event); return false;">
+      <div style="text-align:left; margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; color:#475569;">Usuário</label>
+        <input type="text" id="login_user" placeholder="Ex: Alvaro" style="width:100%; margin-top:4px; padding:12px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;" required>
+      </div>
+      <div style="text-align:left; margin-bottom:20px;">
+        <label style="font-size:12px; font-weight:600; color:#475569;">Senha</label>
+        <input type="password" id="login_pass" placeholder="••••••••" style="width:100%; margin-top:4px; padding:12px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px;" required>
+      </div>
+      <div id="login_error" style="color:#ef4444; font-size:12px; font-weight:600; margin-bottom:12px; display:none;">
+        ❌ Usuário ou senha incorretos!
+      </div>
+      <button type="button" onclick="submitLogin()" style="width:100%; padding:12px; background:#2563eb; color:white; font-weight:700; border:none; border-radius:8px; cursor:pointer; font-size:15px;">
+        🔐 Entrar no Sistema
+      </button>
+    </form>
+  </div>
+</div>
+
+
+<!-- MODAL DE OCORRÊNCIAS SALVAS E SINCRONIZADAS -->
+<div id="ocorrenciasModalOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.7); backdrop-filter:blur(4px); z-index:99999; align-items:center; justify-content:center; padding:16px;">
+  <div style="background:#ffffff; width:100%; max-width:550px; max-height:85vh; border-radius:16px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.3); display:flex; flex-direction:column; overflow:hidden;">
+    <div style="padding:16px 20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
+      <h3 style="font-size:17px; font-weight:700; color:#0f172a; margin:0;">📂 Minhas Ocorrências Salvas</h3>
+      <button type="button" onclick="closeOcorrenciasModal()" style="background:none; border:none; font-size:20px; cursor:pointer; color:#64748b;">✕</button>
+    </div>
+    
+    <div style="padding:12px 20px; background:#eff6ff; border-bottom:1px solid #dbeafe; display:flex; gap:10px; align-items:center; justify-content:space-between;">
+      <span style="font-size:12px; color:#1e40af;">Inicie uma nova ocorrência ou abra um rascunho anterior:</span>
+      <button type="button" onclick="resetForm(); closeOcorrenciasModal(); showToast('✨ Formulário zerado!');" style="padding:6px 12px; background:#2563eb; color:white; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">➕ Nova Em Branco</button>
+    </div>
+
+    <div id="ocorrenciasListContainer" style="padding:16px; overflow-y:auto; flex:1;">
+      <!-- Ocorrências renderizadas via JS -->
+    </div>
+
+    <div style="padding:12px 20px; border-top:1px solid #e2e8f0; background:#f8fafc; text-align:right;">
+      <button type="button" onclick="closeOcorrenciasModal()" style="padding:8px 16px; background:#e2e8f0; color:#334155; border:none; border-radius:8px; font-weight:600; cursor:pointer;">Fechar</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
